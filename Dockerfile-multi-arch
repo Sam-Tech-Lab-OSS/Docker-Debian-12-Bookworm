@@ -1,0 +1,170 @@
+# ------------------------------------------------ #
+# Étape 1 — Build du rootfs Debian 12 (Bookworm)#
+# ------------------------------------------------ #
+
+FROM alpine:3.24@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b AS builder
+
+# Arguments Buildx (auto fournis : TARGETARCH, TARGETPLATFORM)
+ARG TARGETARCH
+ARG TARGETPLATFORM
+
+# Variables globales
+ENV SUITE=bookworm
+ENV ARCH=${TARGETARCH}
+
+# Installer les outils nécessaires
+# hadolint ignore=DL3018
+RUN apk add --no-cache bash curl git jq xz tar tzdata
+
+# Télécharger le rootfs Debian officiel correspondant à l’architecture.
+# hadolint ignore=DL3003
+RUN echo "**** Build rootfs Debian (${SUITE}) pour ${ARCH} ****" && \
+    case "${ARCH}" in \
+        amd64) BRANCHE=dist-amd64 ;; \
+        arm64) BRANCHE=dist-arm64v8 ;; \
+        *) echo "Architecture non prise en charge : ${ARCH}" >&2; exit 1 ;; \
+    esac && \
+    git clone --depth=1 https://github.com/debuerreotype/docker-debian-artifacts -b "${BRANCHE}" /build && \
+    cd "/build/${SUITE}/oci" && \
+    DIGEST=$(jq -r '.manifests[0].digest[7:]' < index.json) && \
+    TARBALL=$(jq -r '.layers[0].digest[7:]' < "blobs/sha256/${DIGEST}") && \
+    mkdir /rootfs && \
+    tar -xf "blobs/sha256/${TARBALL}" -C /rootfs && \
+    rm -rf /rootfs/var/log/* \
+        /rootfs/root/.ssh /rootfs/root/.bashrc /rootfs/root/.profile /build
+
+# -------------------------------------- #
+# Étape 2 — Image finale Debian minimale #
+# -------------------------------------- #
+
+FROM scratch
+
+ARG TARGETARCH
+ARG BUILD_DATE
+ARG REPO_URL=https://github.com/Sam-Tech-Lab-OSS/Docker-Debian-12-Bookworm
+ARG AUTHORS="Sam Tech Lab"
+ARG TITLE="Debian 12 (Bookworm) Base"
+ARG DESCRIPTION="Image Debian 12 légère, durcie et multi-architecture"
+ARG VERSION="12"
+ARG LICENSES="Apache-2.0"
+
+# Copier le rootfs préparé
+COPY --from=builder /rootfs/ /
+
+# -------------------------- #
+# Labels conformes OCI       #
+# -------------------------- #
+LABEL maintainer="$AUTHORS" \
+      org.opencontainers.image.title="$TITLE" \
+      org.opencontainers.image.description="$DESCRIPTION" \
+      org.opencontainers.image.version="$VERSION" \
+      org.opencontainers.image.architecture=$TARGETARCH \
+      org.opencontainers.image.authors="$AUTHORS" \
+      org.opencontainers.image.licenses="$LICENSES" \
+      org.opencontainers.image.source=$REPO_URL \
+      org.opencontainers.image.created=$BUILD_DATE
+
+# --------------------------- #
+# Environnement global        #
+# --------------------------- #
+ENV LANG=en_US.UTF-8 \
+    LANGUAGE=en_US:en \
+    LC_ALL=en_US.UTF-8 \
+    TERM=xterm \
+    DEBIAN_FRONTEND=noninteractive \
+    TZ=UTC \
+    PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+# ------------------------------ #
+# Optimisations APT et conteneur #
+# ------------------------------ #
+RUN set -eux && \
+    echo "**** Optimisation Debian pour Docker ****" && \
+    printf '%s\n' '#!/bin/sh' 'exit 101' > /usr/sbin/policy-rc.d && chmod +x /usr/sbin/policy-rc.d && \
+    dpkg-divert --local --rename --add /sbin/initctl && \
+    cp -a /usr/sbin/policy-rc.d /sbin/initctl && \
+    sed -i 's/^exit.*/exit 0/' /sbin/initctl && \
+    echo 'force-unsafe-io' > /etc/dpkg/dpkg.cfg.d/docker-apt-speedup && \
+    echo 'DPkg::Post-Invoke { "rm -f /var/cache/apt/archives/*.deb /var/cache/apt/archives/partial/*.deb /var/cache/apt/*.bin || true"; };' > /etc/apt/apt.conf.d/docker-clean && \
+    echo 'APT::Install-Recommends "false";' > /etc/apt/apt.conf.d/00recommends && \
+    echo 'APT::Install-Suggests "false";' >> /etc/apt/apt.conf.d/00recommends && \
+    echo 'Acquire::Languages "none";' > /etc/apt/apt.conf.d/docker-no-languages && \
+    echo 'Acquire::GzipIndexes "true"; Acquire::CompressionTypes::Order:: "gz";' > /etc/apt/apt.conf.d/docker-gzip-indexes && \
+    echo 'Apt::AutoRemove::SuggestsImportant "false";' > /etc/apt/apt.conf.d/docker-autoremove-suggests && \
+    mkdir -p /run/systemd && echo 'docker' > /run/systemd/container
+
+# ------------------ #
+# Paquets essentiels #
+# ------------------ #
+# hadolint ignore=DL3008
+RUN set -eux && \
+    echo "**** Installation des paquets de base ****" && \
+    apt-get update && \
+    apt-get upgrade -y && \
+    apt-get install -y --no-install-recommends \
+        apt-utils \
+        ca-certificates \
+        locales \
+        cron \
+        curl \
+        gnupg \
+        jq \
+        netcat-openbsd \
+        tzdata && \
+    update-ca-certificates && \
+    echo "en_US.UTF-8 UTF-8" > /etc/locale.gen && \
+    locale-gen && \
+    rm -rf /var/lib/apt/lists/*
+
+# -------------------------------------------------- #
+# Sécurité & utilisateur non-root (production-grade) #
+# -------------------------------------------------- #
+
+ARG PUID=1000
+ARG PGID=1000
+
+ENV HOME=/config
+
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
+RUN set -eux && \
+    echo "**** Création utilisateur sécurisé ****" && \
+    if ! command -v getent >/dev/null; then echo "getent introuvable : la garde UID/GID serait inopérante"; exit 1; fi && \
+    if getent passwd "${PUID}" >/dev/null; then \
+        CONFLIT="$(getent passwd "${PUID}" | cut -d: -f1)"; \
+        echo "**** UID ${PUID} occupé par ${CONFLIT} — suppression ****"; \
+        userdel -r "${CONFLIT}" >/dev/null 2>&1 || true; \
+        if getent passwd "${PUID}" >/dev/null; then echo "UID ${PUID} toujours occupé"; exit 1; fi; \
+    fi && \
+    if getent group "${PGID}" >/dev/null; then \
+        CONFLIT="$(getent group "${PGID}" | cut -d: -f1)"; \
+        echo "**** GID ${PGID} occupé par ${CONFLIT} — suppression ****"; \
+        groupdel "${CONFLIT}" >/dev/null 2>&1 || true; \
+        if getent group "${PGID}" >/dev/null; then echo "GID ${PGID} toujours occupé"; exit 1; fi; \
+    fi && \
+    groupadd -g ${PGID} appuser && \
+    useradd -l -u ${PUID} -g ${PGID} -d /config -s /usr/sbin/nologin appuser && \
+    mkdir -p /config && chown -R appuser:appuser /config && chmod 750 /config && \
+    echo 'umask 027' >> /etc/profile && \
+    { find / -xdev -type f \( -perm -4000 -o -perm -2000 \) -exec chmod a-s {} + 2>/dev/null || true; } && \
+    { find / -xdev -type f -perm /0002 -exec chmod o-w {} + 2>/dev/null || true; } && \
+    passwd -l root && chmod 700 /root && \
+    id appuser && \
+    echo "**** User appuser ready (UID=${PUID}, GID=${PGID}) ****"
+
+# --------------- #
+# Nettoyage final #
+# --------------- #
+RUN set -eux && \
+    echo "**** Nettoyage du système ****" && \
+    apt-get autoremove -y && apt-get clean && \
+    rm -rf /tmp/* /var/tmp/* /var/log/*
+
+# hadolint ignore=DL3066
+USER appuser
+
+# Définir le shell par défaut
+SHELL ["/bin/bash", "-c"]
+
+# Commande par défaut
+CMD ["/bin/bash"]
