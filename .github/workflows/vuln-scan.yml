@@ -7,7 +7,7 @@ on:
     types:
       - completed
   schedule:
-    - cron: "0 5 * * 1" # chaque lundi à 05h00 UTC
+    - cron: "15 2 * * 1" # chaque lundi à 02h15 UTC
   workflow_dispatch:
 
 concurrency:

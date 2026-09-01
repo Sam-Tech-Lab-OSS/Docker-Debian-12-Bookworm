@@ -159,7 +159,7 @@ L'analyse de sécurité est automatisée avec [Trivy](https://github.com/aquasec
 | Artefacts GitHub Actions | JSON | Artefact téléchargeable |
 
 Le workflow d'analyse s'exécute :
-- chaque semaine, le lundi à **04h00 UTC**
+- chaque semaine, le lundi à **02h15 UTC**
 - automatiquement après chaque workflow de build ayant publié une image
 - manuellement via GitHub Actions si besoin
 
