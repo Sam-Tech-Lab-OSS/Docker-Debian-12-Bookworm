@@ -809,11 +809,11 @@ Même cause : le PID 1 ne récupère pas ses fils. Utilisez `--init`.
 
 ## Maintenance
 
-- **Les images sont reconstruites chaque mois** (le 1er, à 03h00 UTC) à partir de l'archive
+- **Les images sont reconstruites chaque mois** (le 1er, à 02h15 UTC) à partir de l'archive
   Bookworm courante, et peuvent être déclenchées manuellement depuis l'onglet Actions. Voir
   [État du support de l'image de base](#état-du-support-de-limage-de-base) pour ce que cela
   couvre — et ne couvre pas.
-- **Les vulnérabilités sont scannées chaque semaine** (lundi, 04h00 UTC) et après chaque build
+- **Les vulnérabilités sont scannées chaque semaine** (lundi, 02h15 UTC) et après chaque build
   ayant publié une image, avec Trivy, sur les deux architectures. Les vulnérabilités sans
   correctif disponible sont incluses. Les rapports JSON complets sont conservés 90 jours en
   artefacts de build, et chaque run écrit un tableau de synthèse sur sa page de workflow. Les

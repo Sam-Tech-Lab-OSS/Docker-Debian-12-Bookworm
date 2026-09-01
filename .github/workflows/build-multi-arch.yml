@@ -8,7 +8,7 @@ on:
   pull_request:
     branches: [ main ]
   schedule:
-    - cron: "0 4 1 * *" # chaque 1er du mois à 04h00 UTC
+    - cron: "15 2 1 * *" # chaque 1er du mois à 02h15 UTC
   workflow_dispatch:
 
 concurrency:
